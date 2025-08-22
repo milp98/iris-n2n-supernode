@@ -1,6 +1,7 @@
 $scriptDir = $PSScriptRoot
 $tempZip = $null
-
+$global:DownloadErrBool = $false
+$global:DownloadChina = "YXEucmFpbnBsYXkuY246MjE1MDE="
 $ErrorActionPreference = "Stop"
 
 function Get-NSSM {
@@ -9,8 +10,10 @@ function Get-NSSM {
     $tempZip = Join-Path $env:TEMP "nssm-${nssmVersion}.zip"
 
     if (Get-ChildItem -Path $scriptDir -Recurse -Filter "nssm.exe" | Select-Object -First 1) {
-        Write-Host "nssm.exe 已经存在，跳过"
+        Write-Host "NSSM 已经存在于目录，跳过下载." -ForegroundColor Green
         return
+    } else {
+        Write-Host "正在从获取 NSSM..." -ForegroundColor Blue
     }
 
     try {
@@ -30,13 +33,18 @@ function Get-NSSM {
         }
     } finally {
         # 清理临时文件
-        exit
+        if (Test-Path $tempZip) {
+            Remove-Item $tempZip -Force -ErrorAction SilentlyContinue
+        }
+        if (Test-Path $tempDir) {
+            Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 
 function Get-n2n {
     if (Get-ChildItem -Path $scriptDir -Recurse -Filter "supernode.exe" | Select-Object -First 1) {
-        Write-Host "supernode.exe 已经存在，跳过"
+        Write-Host "supernode 已经存在于目录，跳过下载." -ForegroundColor Green
         return
     }
     # n2n 版本和作者信息
@@ -51,7 +59,7 @@ function Get-n2n {
     }
 
     try {
-        Write-Host "正在从获取$N2NReleaseAuthor/n2n的Releases信息." -ForegroundColor Cyan
+        Write-Host "正在从获取Github项目$N2NReleaseAuthor/n2n的Releases信息." -ForegroundColor Cyan
         $response = Invoke-RestMethod -Uri $ApiURL -Headers $headers -ErrorAction Stop
         # 过滤正式版本（非预发布）
         $releases = $response | Where-Object { -not $_.prerelease }
@@ -76,9 +84,10 @@ function Get-n2n {
         }
 
         $windowsAssets | ForEach-Object {
-            Write-Host "已找到文件: $($_.name) $($_.browser_download_url)" -ForegroundColor Green
+            # $($_.browser_download_url)
+            Write-Host "已找到文件: $($_.name)" -ForegroundColor Green
             $n2nUrl = $_.browser_download_url
-            $tempZip = Join-Path $env:TEMP $_.UrlFileName
+            $tempZip = Join-Path $env:TEMP $_.name
         
             try {
                 # 下载并解压 n2n
@@ -100,8 +109,12 @@ function Get-n2n {
                 throw
             } finally {
                 # 清理临时文件
-                if (Test-Path $tempZip) { Remove-Item $tempZip -Force -ErrorAction SilentlyContinue }
-                if (Test-Path $tempDir) { Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue }
+                if (Test-Path $tempZip) { 
+                    Remove-Item $tempZip -Force -ErrorAction SilentlyContinue 
+                }
+                if (Test-Path $tempDir) { 
+                    Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue 
+                }
             }
         }
     } catch {
@@ -113,7 +126,7 @@ function Get-n2n {
     }
 }
 
-function Set-Config{
+function Set-Config {
     # 配置IrisN2N服务器
     $serviceName = "IrisServer"
     $defaultPort = 7654
@@ -187,16 +200,46 @@ function Set-Config{
     exit 0
 }
 
-try {
-    # 下载IrisN2N Server
-    if (Get-ChildItem -Path $scriptDir -Recurse -Filter "supernode.conf" | Select-Object -First 1) {
-        Write-Host "supernode.conf 已经存在，如果想重新生成请删除文件"
-        return
-    }
+function Start-InstallerN2N {
+    param (
+        [ScriptBlock]$ScriptBlock,
+        [int]$MaxRetries = 3,
+        [int]$RetryDelay = 5
+    )
+
+    $RetryCount = 0
+    $lastException = $null
+
+    while ($RetryCount -le $MaxRetries) {
+        try {
+            & $ScriptBlock
+            return
+        } 
+        catch {
+            $RetryCount++
+            $lastException = $_
+            
+            if ($RetryCount -lt $MaxRetries) {
+                $global:DownloadErrBool = $true
+                Write-Host "网络错误: $($_.Exception.Message)，正在重试 ($RetryCount/$MaxRetries)..."
+                Start-Sleep -Seconds $RetryDelay
+            } 
+            else {
+                Write-Host "已达重试上限: $($_.Exception.Message)" -ForegroundColor Red
+                exit 3
+            }
+        }
+    } 
+}
+
+if (Get-ChildItem -Path $scriptDir -Recurse -Filter "supernode.conf" | Select-Object -First 1) {
+    Write-Host "supernode.conf 已经存在，如果想重新生成请删除文件"
+    exit 7
+}
+
+# 调用函数，传入执行的shell块
+Start-InstallerN2N -ScriptBlock {
     Get-NSSM
     Get-n2n
     Set-Config
-} catch {
-    Write-Host "失败: $_" -ForegroundColor Red
-    exit 1
-}
+} -MaxRetries 3 -RetryDelay 5
