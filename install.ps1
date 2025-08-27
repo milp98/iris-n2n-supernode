@@ -126,13 +126,23 @@ function Get-n2n {
     }
 }
 
+function Get-N2NPassword {
+    param(
+        [int]$Length = 12,
+        [int]$NumberMini = 3
+    )
+    
+    Add-Type -AssemblyName System.Web
+    return [System.Web.Security.Membership]::GeneratePassword($Length, $NumberMini)
+}
+
 function Set-Config {
     # 配置IrisN2N服务器
-    $serviceName = "IrisServer"
+    $serviceName = "Iris服务器"
     $defaultPort = 7654
     $defaultFederation = "Iris"
     $defaultManagementPort = 5656
-    $defaultManagementPassword = "Iris-server"
+    $defaultManagementPassword = Get-N2NPassword
     
 
     $port = Read-Host "服务器端口 (默认: $defaultPort)"
@@ -140,12 +150,12 @@ function Set-Config {
         $port = $defaultPort
     }
 
-    $federation = Read-Host "输入联邦名称 (默认: $defaultFederation)"
+    $federation = Read-Host "联邦名称 (默认: $defaultFederation)"
     if ([string]::IsNullOrWhiteSpace($federation)) {
         $federation = $defaultFederation
     }
 
-    $managementPort = Read-Host "请输入管理端口 (默认: $defaultManagementPort)"
+    $managementPort = Read-Host "管理端口 (默认: $defaultManagementPort)"
     if ([string]::IsNullOrWhiteSpace($managementPort)) {
         $managementPort = $defaultManagementPort
     }
@@ -166,6 +176,31 @@ function Set-Config {
 --management-password=$managementPasswordPlain
 "@
 
+    $ExePath = "$scriptDir\supernode.exe"
+
+    Write-Host "注册到Windows防火墙..." -ForegroundColor Green
+    if (!(Get-NetFirewallRule -DisplayName $serviceName -ErrorAction SilentlyContinue)) {
+        New-NetFirewallRule -DisplayName "$serviceName" `
+        -Direction Inbound `
+        -Program $ExePath `
+        -Protocol UDP `
+        -LocalPort $port `
+        -Action Allow | Out-Null
+
+        Enable-NetFirewallRule -DisplayName $serviceName
+    }
+
+    if (!(Get-NetFirewallRule -DisplayName "$serviceName API" -ErrorAction SilentlyContinue)) {
+        New-NetFirewallRule -DisplayName "$serviceName API" `
+        -Direction Inbound `
+        -Program $ExePath `
+        -Protocol UDP `
+        -LocalPort $defaultManagementPort `
+        -Action Block | Out-Null
+
+        Enable-NetFirewallRule -DisplayName "$serviceName API"
+    }
+
 # 写入配置文件
     try {
         $configPath = "supernode.conf"
@@ -173,27 +208,32 @@ function Set-Config {
         Write-Host "写入配置: $((Get-Item $configPath).FullName)"
     } catch {
         Write-Host "写入配置时出错: $_" -ForegroundColor Red
-        exit
+        exit 2
     }
 
-    try {
-        $NssMExe = Get-ChildItem -Path $tempDir -Recurse -Filter "nssm.exe"
-        $UseAdmin = {
-            & $scriptDir\$NssMExe install $serviceName "supernode.exe" "$scriptDir\$configPath"
-            & $scriptDir\$NssMExe set $serviceName DisplayName "IrisN2N服务器"
-            & $scriptDir\$NssMExe set $serviceName Description "IrisN2N服务器核心"
-            & $scriptDir\$NssMExe set $serviceName Start SERVICE_AUTO_START
+    if (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {
+        Write-Host "'$serviceName'服务已经存在" -ForegroundColor Yellow
+    } else {
+        Write-Host "注册到Windows服务..." -ForegroundColor Green
+        try {
+            $NssMExe = Get-ChildItem -Path $tempDir -Recurse -Filter "nssm.exe"
+            $UseAdmin = {
+                & $scriptDir\$NssMExe install $serviceName "supernode.exe" "$scriptDir\$configPath" | Out-Null
+                & $scriptDir\$NssMExe set $serviceName DisplayName "IrisN2N服务器" | Out-Null
+                & $scriptDir\$NssMExe set $serviceName Description "IrisN2N服务器核心" | Out-Null
+                & $scriptDir\$NssMExe set $serviceName Start SERVICE_AUTO_START | Out-Null
+            }
+            if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+                Start-Process -FilePath "pwsh" -ArgumentList "-NoProfile -Command & {$UseAdmin}" -Verb RunAs
+            } else {
+                Invoke-Command -ScriptBlock $UseAdmin
+            }
+        
+        } catch {
+            Write-Host "执行指令时失败: $_" -ForegroundColor Red
+            Write-Host "请检查 $serviceName 服务是否存在于Windows服务中" -ForegroundColor Yellow
+            exit 5
         }
-        if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-            Start-Process -FilePath "pwsh" -ArgumentList "-NoProfile -Command & {$UseAdmin}" -Verb RunAs
-        } else {
-            Invoke-Command -ScriptBlock $UseAdmin
-        }
-    
-    } catch {
-        Write-Host "执行某一个指令时失败: $_" -ForegroundColor Red
-        Write-Host "请检查 $serviceName 服务是否存在于Windows服务中" -ForegroundColor Yellow
-        exit 5
     }
 
     Write-Host "安装IrisN2N完成"
@@ -237,9 +277,10 @@ if (Get-ChildItem -Path $scriptDir -Recurse -Filter "supernode.conf" | Select-Ob
     exit 7
 }
 
-# 调用函数，传入执行的shell块
+# 调用下载重试方法
 Start-InstallerN2N -ScriptBlock {
     Get-NSSM
     Get-n2n
-    Set-Config
 } -MaxRetries 3 -RetryDelay 5
+
+Set-Config
