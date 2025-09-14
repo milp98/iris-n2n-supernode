@@ -1,0 +1,204 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IrisN2N Web控制台</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Consolas', 'Microsoft YaHei', monospace;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            overflow: hidden;
+        }
+        header {
+            background: linear-gradient(90deg, #2c3e50, #34495e);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            color: #bdc3c7;
+            font-size: 1.1em;
+        }
+        .nav {
+            background: #ecf0f1;
+            padding: 15px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+        }
+        .nav-btn {
+            background: #3498db;
+            color: white;
+            padding: 12px 20px;
+            text-decoration: none;
+            border-radius: 25px;
+            transition: all 0.3s ease;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .nav-btn:hover {
+            background: #2980b9;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+        .content {
+            padding: 30px;
+            min-height: 400px;
+        }
+        .result {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+            max-height: 500px;
+            overflow-y: auto;
+            font-family: 'Consolas', monospace;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .status {
+            padding: 10px;
+            background: #d4edda;
+            color: #155724;
+            border-radius: 5px;
+            margin: 10px 0;
+            display: none;
+        }
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #6c757d;
+        }
+        .endpoint {
+            background: #e3f2fd;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 8px;
+            border-left: 4px solid #2196f3;
+        }
+        .endpoint h3 {
+            color: #1976d2;
+            margin-bottom: 5px;
+        }
+        .endpoint p {
+            color: #546e7a;
+            margin-bottom: 10px;
+        }
+        .timestamp {
+            font-size: 0.9em;
+            color: #7f8c8d;
+            text-align: right;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Iris Web控制台</h1>
+            <p class="subtitle">实时系统监控与管理界面</p>
+        </header>
+        
+        <div class="nav">
+            <a href="/supernodes" class="nav-btn">🖥️ SuperNodes</a>
+            <a href="/edges" class="nav-btn">🔗 Edges</a>
+            <a href="/communities" class="nav-btn">👥 Communities</a>
+            <a href="/reload_communities" class="nav-btn">🔄 Reload Communities</a>
+            <a href="/timestamps" class="nav-btn">⏰ Timestamps</a>
+            <a href="/packetstats" class="nav-btn">📊 Packet Stats</a>
+            <a href="/verbose" class="nav-btn">📋 Verbose Info</a>
+        </div>
+
+        <div class="content">
+            <h2>N2N</h2>
+            <p>点击上方按钮查看信息</p>
+            
+            <div class="endpoint">
+                <h3>说明</h3>
+                <p><strong>/supernodes</strong> - XXXXX</p>
+            </div>
+
+            <div id="status" class="status"></div>
+            <div class="timestamp">页面生成时间: 2025-08-28 15:14:52</div>
+        </div>
+    </div>
+
+    <script>
+        // 为导航按钮添加点击事件
+        document.querySelectorAll('.nav-btn').forEach(btn => {
+            btn.addEventListener('click', async function(e) {
+                e.preventDefault();
+                const url = this.getAttribute('href');
+                await fetchData(url);
+            });
+        });
+
+        // 自动加载当前URL对应的数据
+        window.addEventListener('load', () => {
+            const path = window.location.pathname;
+            if (path !== '/') {
+                fetchData(path);
+            }
+        });
+
+        async function fetchData(url) {
+            const statusEl = document.getElementById('status');
+            const resultEl = document.getElementById('result');
+            
+            statusEl.style.display = 'block';
+            statusEl.textContent = '正在获取数据...';
+            statusEl.style.background = '#fff3cd';
+            statusEl.style.color = '#856404';
+            
+            resultEl.innerHTML = '<div class="loading">⏳ 加载中...</div>';
+
+            try {
+                const response = await fetch(url);
+                if (response.ok) {
+                    const data = await response.text();
+                    resultEl.innerHTML = <pre></pre>;
+                    statusEl.textContent = '✅ 数据获取成功';
+                    statusEl.style.background = '#d4edda';
+                    statusEl.style.color = '#155724';
+                    
+                    // 更新URL但不刷新页面
+                    window.history.pushState({}, '', url);
+                } else {
+                    throw new Error('请求失败');
+                }
+            } catch (error) {
+                resultEl.innerHTML = <pre style="color: red;">❌ 错误: </pre>;
+                statusEl.textContent = '❌ 获取数据失败';
+                statusEl.style.background = '#f8d7da';
+                statusEl.style.color = '#721c24';
+            }
+            
+            setTimeout(() => {
+                statusEl.style.display = 'none';
+            }, 3000);
+        }
+    </script>
+</body>
+</html>
